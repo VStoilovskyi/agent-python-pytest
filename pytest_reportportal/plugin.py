@@ -1,22 +1,21 @@
 """This module contains changed pytest for report-portal."""
 
+import logging
 # This program is free software: you can redistribute it
 # and/or modify it under the terms of the GPL licence
-
-import dill as pickle
-import logging
+import queue
 import time
 
+import dill as pickle
 import pytest
 import requests
-
-from pytest_reportportal import LAUNCH_WAIT_TIMEOUT
 from reportportal_client.errors import ResponseError
 from reportportal_client.helpers import gen_attributes
 
+from pytest_reportportal import LAUNCH_WAIT_TIMEOUT
 from .config import AgentConfig
 from .listener import RPReportListener
-from .service import PyTestServiceClass
+from .thread_report_service import DelayedReportHandler
 
 
 log = logging.getLogger(__name__)
@@ -94,15 +93,19 @@ def pytest_sessionstart(session):
                 uuid=config._reporter_config.rp_uuid,
                 log_batch_size=config._reporter_config.rp_log_batch_size,
                 is_skipped_an_issue=config._reporter_config.
-                rp_is_skipped_an_issue,
+                    rp_is_skipped_an_issue,
                 ignore_errors=config._reporter_config.rp_ignore_errors,
                 custom_launch=config._reporter_config.rp_launch_id,
                 ignored_attributes=config._reporter_config.
-                rp_ignore_attributes,
+                    rp_ignore_attributes,
                 verify_ssl=config._reporter_config.rp_verify_ssl,
                 retries=config._reporter_config.rp_retries,
                 parent_item_id=config._reporter_config.rp_parent_item_id,
+                report_queue=session.config.report_queue,
             )
+
+            # Start log listener thread
+            session.config.py_test_service.start()
         except ResponseError as response_error:
             log.warning('Failed to initialize reportportal-client service. '
                         'Reporting is disabled.')
@@ -146,6 +149,11 @@ def pytest_sessionfinish(session):
         return
     if is_master(session.config):
         if not session.config.option.rp_launch_id:
+            # Put None to queue for finishing reporting thread
+            session.config.report_queue.put(None)
+            # Wait for the thread to finish tests execution
+            session.config.py_test_service.join()
+
             session.config.py_test_service.finish_launch()
 
 
@@ -180,15 +188,17 @@ def pytest_configure(config):
     config._reporter_config = agent_config
 
     if is_master(config):
-        config.py_test_service = PyTestServiceClass()
+        config.py_test_service = DelayedReportHandler()
     else:
         config.py_test_service = pickle.loads(
             config.workerinput['py_test_service'])
-
+    config.report_queue = queue.Queue()
     config._reporter = RPReportListener(
         config.py_test_service,
         log_level=agent_config.rp_log_level or logging.NOTSET,
-        endpoint=agent_config.rp_endpoint)
+        endpoint=agent_config.rp_endpoint,
+        report_queue=config.report_queue
+    )
     if hasattr(config, '_reporter'):
         config.pluginmanager.register(config._reporter)
 

@@ -2,6 +2,9 @@
 
 import pytest
 import logging
+
+from .thread_report_service import DelayedReportData
+
 try:
     from html import escape  # python3
 except ImportError:
@@ -23,10 +26,10 @@ class RPReportListener(object):
 
     def __init__(self, py_test_service,
                  log_level=logging.NOTSET,
-                 endpoint=None):
+                 endpoint=None, report_queue=None):
         """Initialize RPReport Listener instance.
 
-        :param py_test_service: PyTestServiceClass instance
+        :param py_test_service: DelayedReportHandler instance
         :param log_level:       One of the 'CRITICAL', 'ERROR',
                                 'WARNING','INFO','DEBUG', 'NOTSET'
         :param endpoint:        Report Portal API endpoint
@@ -36,12 +39,15 @@ class RPReportListener(object):
         self.result = None
         self.issue = {}
         self._log_level = log_level
+        self.report_queue = report_queue
+        self.report = None
         if PYTEST_HAS_LOGGING_PLUGIN:
             self._log_handler = \
-                RPLogHandler(py_test_service=py_test_service,
+                RPLogHandler(reporter=self.report,
                              level=log_level,
                              filter_client_logs=True,
-                             endpoint=endpoint)
+                             endpoint=endpoint,
+                             )
 
     @pytest.hookimpl(hookwrapper=True)
     def pytest_runtest_protocol(self, item):
@@ -52,7 +58,7 @@ class RPReportListener(object):
         :return: generator object
         """
         self._add_issue_id_marks(item)
-        item_id = self.py_test_service.start_pytest_item(item)
+        self.report = DelayedReportData(item)
         if PYTEST_HAS_LOGGING_PLUGIN:
             # This check can go away once we support pytest >= 3.3
             with patching_logger_class():
@@ -62,8 +68,9 @@ class RPReportListener(object):
         else:
             yield
         # Finishing item in RP
-        self.py_test_service.finish_pytest_item(
-            item, item_id, self.result or 'SKIPPED', self.issue or None)
+        self.report.add_result(self.result or 'SKIPPED', self.issue or None)
+        self.py_test_service.report_queue.put(self.report)
+        self.report = None
 
     @pytest.hookimpl(hookwrapper=True)
     def pytest_runtest_makereport(self, item):
@@ -76,9 +83,7 @@ class RPReportListener(object):
         report = (yield).get_result()
 
         if report.longrepr:
-            self.py_test_service.post_log(
-                escape(report.longreprtext, False),
-                loglevel='ERROR')
+            self.report.add_log((escape(report.longreprtext, False), 'ERROR', None))
 
         # Defining test result
         if report.when == 'setup':

@@ -1,12 +1,14 @@
 """RPLogger class for low-level logging in tests."""
 
-import sys
 import logging
+import sys
 from contextlib import contextmanager
 from functools import wraps
 
 from six import PY2
 from six.moves.urllib.parse import urlparse
+
+from pytest_reportportal.listener import RPReportListener
 
 
 class RPLogger(logging.getLoggerClass()):
@@ -83,21 +85,21 @@ class RPLogHandler(logging.Handler):
     }
     _sorted_levelnos = sorted(_loglevel_map.keys(), reverse=True)
 
-    def __init__(self, py_test_service,
+    def __init__(self, reporter,
                  level=logging.NOTSET,
                  filter_client_logs=False,
                  endpoint=None):
         """
         Initialize RPLogHandler instance.
 
-        :param py_test_service:    RP Service instance
+        :param reporter:    RP Service instance
         :param level:              level of logging
         :param filter_client_logs: if True throw away logs emitted by a
         ReportPortal client
         :param endpoint:           link to send reports
         """
         super(RPLogHandler, self).__init__(level)
-        self.py_test_service = py_test_service
+        self.reporter = reporter
         self.filter_client_logs = filter_client_logs
         self.ignored_record_names = ('reportportal_client',
                                      'pytest_reportportal')
@@ -140,12 +142,22 @@ class RPLogHandler(logging.Handler):
 
         for level in self._sorted_levelnos:
             if level <= record.levelno:
-                return self.py_test_service.post_log(
-                    msg,
-                    loglevel=self._loglevel_map[level],
-                    attachment=record.__dict__.get('attachment', None),
-                )
-
+                if isinstance(self.reporter, RPReportListener):
+                    return self.reporter.report.add_log(
+                        (
+                            msg,
+                            self._loglevel_map[level],
+                            record.__dict__.get('attachment', None)
+                        )
+                    )
+                else:
+                    return self.reporter.add_log(
+                        (
+                            msg,
+                            self._loglevel_map[level],
+                            record.__dict__.get('attachment', None)
+                        )
+                    )
 
 @contextmanager
 def patching_logger_class():
@@ -190,6 +202,7 @@ def patching_logger_class():
                                            extra=extra)
                 record.attachment = attachment
                 return record
+
             return makeRecord
 
         if not issubclass(logger_class, RPLogger):

@@ -5,7 +5,7 @@ import os
 from setuptools import setup
 
 
-__version__ = '5.0.10'
+__version__ = '1.0b1'
 
 
 def read_file(fname):
@@ -19,9 +19,9 @@ def read_file(fname):
 
 
 setup(
-    name='pytest-reportportal',
+    name='pytest-lazy-reportportal',
     version=__version__,
-    description='Agent for Reporting results of tests to the Report Portal',
+    description='Agent for Reporting results of tests to the Report Portal in the log thread',
     long_description=read_file('README.rst'),
     long_description_content_type='text/markdown',
     author_email='SupportEPMC-TSTReportPortal@epam.com',
@@ -32,8 +32,6 @@ setup(
     keywords=['testing', 'reporting', 'reportportal', 'pytest'],
     classifiers=[
         'Framework :: Pytest',
-        'Programming Language :: Python :: 2.7',
-        'Programming Language :: Python :: 3.5',
         'Programming Language :: Python :: 3.6',
         'Programming Language :: Python :: 3.7',
         'Programming Language :: Python :: 3.8'
